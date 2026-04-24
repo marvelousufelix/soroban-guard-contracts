@@ -5,32 +5,30 @@
 //! tokens from the recipient instead of sending them.
 //!
 //! VULNERABILITY: Missing `assert!(amount > 0)` guard before balance mutation.
-//! SECURE MIRROR: `SecureTokenContract` rejects `amount <= 0`.
+//! SECURE MIRROR: `secure::SecureTokenContract` rejects `amount <= 0`.
 
 #![no_std]
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env};
+
+pub mod secure;
 
 #[contracttype]
 pub enum DataKey {
     Balance(Address),
 }
 
-fn get_balance(env: &Env, account: &Address) -> i128 {
+pub fn get_balance(env: &Env, account: &Address) -> i128 {
     env.storage()
         .persistent()
         .get(&DataKey::Balance(account.clone()))
         .unwrap_or(0)
 }
 
-fn set_balance(env: &Env, account: &Address, amount: i128) {
+pub fn set_balance(env: &Env, account: &Address, amount: i128) {
     env.storage()
         .persistent()
         .set(&DataKey::Balance(account.clone()), &amount);
 }
-
-// ---------------------------------------------------------------------------
-// Vulnerable contract
-// ---------------------------------------------------------------------------
 
 #[contract]
 pub struct TokenContract;
@@ -38,8 +36,7 @@ pub struct TokenContract;
 #[contractimpl]
 impl TokenContract {
     pub fn mint(env: Env, to: Address, amount: i128) {
-        let current = get_balance(&env, &to);
-        set_balance(&env, &to, current + amount);
+        set_balance(&env, &to, get_balance(&env, &to) + amount);
     }
 
     /// VULNERABLE: `amount` is never checked to be positive.
@@ -58,45 +55,11 @@ impl TokenContract {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Secure mirror
-// ---------------------------------------------------------------------------
-
-#[contract]
-pub struct SecureTokenContract;
-
-#[contractimpl]
-impl SecureTokenContract {
-    pub fn mint(env: Env, to: Address, amount: i128) {
-        let current = get_balance(&env, &to);
-        set_balance(&env, &to, current + amount);
-    }
-
-    /// SECURE: rejects `amount <= 0` before touching balances.
-    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
-        from.require_auth();
-        assert!(amount > 0, "amount must be positive");
-        set_balance(&env, &from, get_balance(&env, &from) - amount);
-        set_balance(&env, &to, get_balance(&env, &to) + amount);
-        env.events()
-            .publish((symbol_short!("transfer"),), (from, to, amount));
-    }
-
-    pub fn balance(env: Env, account: Address) -> i128 {
-        get_balance(&env, &account)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
     use soroban_sdk::{testutils::Address as _, Address, Env};
-
-    // --- Vulnerable contract tests ---
 
     #[test]
     fn test_positive_transfer_works() {
@@ -135,13 +98,13 @@ mod tests {
         assert_eq!(client.balance(&bob), 300);   // lost 200
     }
 
-    // --- Secure contract tests ---
-
     #[test]
     fn test_secure_rejects_negative_amount() {
+        use crate::secure::SecureTokenContractClient;
+
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register_contract(None, SecureTokenContract);
+        let id = env.register_contract(None, secure::SecureTokenContract);
         let client = SecureTokenContractClient::new(&env, &id);
 
         let alice = Address::generate(&env);
@@ -152,16 +115,17 @@ mod tests {
         let result = client.try_transfer(&alice, &bob, &-200);
         assert!(result.is_err());
 
-        // Balances unchanged
         assert_eq!(client.balance(&alice), 500);
         assert_eq!(client.balance(&bob), 500);
     }
 
     #[test]
     fn test_secure_rejects_zero_amount() {
+        use crate::secure::SecureTokenContractClient;
+
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register_contract(None, SecureTokenContract);
+        let id = env.register_contract(None, secure::SecureTokenContract);
         let client = SecureTokenContractClient::new(&env, &id);
 
         let alice = Address::generate(&env);

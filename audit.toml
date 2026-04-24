@@ -1,0 +1,8 @@
+# audit.toml — cargo-audit configuration
+# Add entries here to ignore known false positives.
+# See: https://docs.rs/cargo-audit/latest/cargo_audit/
+
+[advisories]
+# Example:
+# ignore = ["RUSTSEC-2023-XXXX"]
+ignore = []
